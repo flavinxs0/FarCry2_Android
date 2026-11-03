@@ -44,11 +44,15 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.io.OutputStreamWriter;
 import java.io.Writer;
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
 import java.security.MessageDigest;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipOutputStream;
 
 /* Start screen: pick the folder that holds the Far Cry 2 install (the one with
  * bin/ and Data_Win32/), check that it is the build this port was recompiled
@@ -61,7 +65,7 @@ import java.util.Map;
  * GradientDrawable/RippleDrawable shapes, and nothing here can drift out of
  * sync with an XML file. */
 public class Fc2LauncherActivity extends Activity {
-    private static final int REQ_FOLDER = 1, REQ_PERM = 2, REQ_DRIVER = 3;
+    private static final int REQ_FOLDER = 1, REQ_PERM = 2, REQ_DRIVER = 3, REQ_SAVE_LOGS = 4;
 
     /* The recompilation uses fixed addresses: it only works with this build.
      * farcry2.exe 1.0.0.1 (GOG "Fortune's Edition" / retail DVD), Ubisoft,
@@ -90,6 +94,7 @@ public class Fc2LauncherActivity extends Activity {
     private LinearLayout driverList;           /* the GPU-driver rows, rebuilt on demand */
     private FrameLayout homeScreen, settingsScreen;
     private final Map<String, CompoundButton> toggles = new LinkedHashMap<>();
+    private final Map<String, byte[]> diagnosticFiles = new LinkedHashMap<>();
     private final TextView[] logChips = new TextView[3];
     private int logLevel = 1;
     private boolean pendingPick, pendingPlay;  /* continue once the storage prompt is answered */
@@ -102,6 +107,7 @@ public class Fc2LauncherActivity extends Activity {
     protected void onCreate(Bundle b) {
         super.onCreate(b);
         prefs = getSharedPreferences("launcher", MODE_PRIVATE);
+        Fc2Activity.saveLastExit(this, prefs.getString("folder", null));
         black = Typeface.create("sans-serif-black", Typeface.NORMAL);
         medium = Typeface.create("sans-serif-medium", Typeface.NORMAL);
         regular = Typeface.create("sans-serif", Typeface.NORMAL);
@@ -127,6 +133,7 @@ public class Fc2LauncherActivity extends Activity {
     @Override
     protected void onResume() {
         super.onResume();
+        if (prefs != null) Fc2Activity.saveLastExit(this, prefs.getString("folder", null));
         refreshFolder();
     }
 
@@ -535,6 +542,23 @@ public class Fc2LauncherActivity extends Activity {
         drvp.topMargin = dp(12);
         col.addView(drv, drvp);
 
+        LinearLayout diag = card();
+        sectionTitle(diag, "SALVAR LOGS PARA DIAGNÓSTICO");
+        TextView diagText = tv("Depois de reproduzir o crash, volte ao launcher e salve o ZIP. "
+                + "Inclui log do jogo, motivo do encerramento e dados básicos do aparelho. "
+                + "Ative DEBUG antes de jogar para registrar mais detalhes.", 11, MUTED, regular);
+        diagText.setLineSpacing(dp(2), 1f);
+        diag.addView(diagText);
+        TextView saveLogs = button("SALVAR DIAGNÓSTICO (.ZIP)", false);
+        LinearLayout.LayoutParams saveLp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(44));
+        saveLp.topMargin = dp(12);
+        diag.addView(saveLogs, saveLp);
+        tap(saveLogs, this::saveDiagnostics);
+        LinearLayout.LayoutParams diagLp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT);
+        diagLp.topMargin = dp(12);
+        col.addView(diag, diagLp);
+
         ScrollView sv = new ScrollView(this);
         sv.setVerticalScrollBarEnabled(false);
         sv.setFillViewport(true);
@@ -711,6 +735,25 @@ public class Fc2LauncherActivity extends Activity {
     @Override
     protected void onActivityResult(int req, int res, Intent data) {
         super.onActivityResult(req, res, data);
+        if (req == REQ_SAVE_LOGS) {
+            if (res != RESULT_OK || data == null || data.getData() == null) return;
+            try (OutputStream raw = getContentResolver().openOutputStream(data.getData())) {
+                if (raw == null) throw new IOException("Não foi possível abrir o destino.");
+                try (ZipOutputStream zip = new ZipOutputStream(raw)) {
+                    for (Map.Entry<String, byte[]> entry : diagnosticFiles.entrySet()) {
+                        zip.putNextEntry(new ZipEntry(entry.getKey()));
+                        zip.write(entry.getValue());
+                        zip.closeEntry();
+                    }
+                }
+                Toast.makeText(this, "Diagnóstico salvo. Revise o ZIP antes de compartilhar.", Toast.LENGTH_LONG).show();
+            } catch (Exception e) {
+                Toast.makeText(this, "Falha ao salvar diagnóstico: " + e.getMessage(), Toast.LENGTH_LONG).show();
+            } finally {
+                diagnosticFiles.clear();
+            }
+            return;
+        }
         if (req == REQ_DRIVER) {
             if (res == RESULT_OK && data != null && data.getData() != null) unpackDriver(data.getData());
             return;
@@ -728,6 +771,61 @@ public class Fc2LauncherActivity extends Activity {
         if (!askedAllFiles && !hasAllFiles() && unreadable()) {
             askedAllFiles = true;
             requestAllFiles();
+        }
+    }
+
+    private void saveDiagnostics() {
+        diagnosticFiles.clear();
+        String game = prefs.getString("folder", null);
+        if (game != null) Fc2Activity.saveLastExit(this, game);
+        StringBuilder info = new StringBuilder();
+        info.append("Far Cry 2 Android diagnostic bundle\n")
+                .append("Created: ").append(new java.util.Date()).append('\n')
+                .append("Device: ").append(Build.MANUFACTURER).append(' ').append(Build.MODEL).append('\n')
+                .append("Android: ").append(Build.VERSION.RELEASE).append(" (API ").append(Build.VERSION.SDK_INT).append(")\n")
+                .append("ABIs: ").append(java.util.Arrays.toString(Build.SUPPORTED_ABIS)).append('\n')
+                .append("App version: ");
+        try {
+            info.append(getPackageManager().getPackageInfo(getPackageName(), 0).versionName);
+        } catch (Exception e) {
+            info.append("unknown");
+        }
+        info.append("\nLog level: ").append(logLevel == 0 ? "off" : logLevel == 1 ? "normal" : "debug")
+                .append("\nVulkan driver selection: ").append(driverChoice())
+                .append("\nGame folder selected: ").append(game == null ? "no" : "yes")
+                .append("\n\nThe bundle may contain runtime file paths and a native crash trace. Review before sharing.\n");
+        diagnosticFiles.put("device_info.txt", info.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        if (game != null) {
+            File port = new File(game, "port");
+            addDiagnosticFile("game_log.txt", new File(port, "log.txt"));
+            addDiagnosticFile("last_exit.txt", new File(port, "last_exit.txt"));
+            addDiagnosticFile("native_trace.bin", new File(port, "native_trace.bin"));
+        }
+        if (diagnosticFiles.size() == 1) {
+            Toast.makeText(this, "Ainda não há log do jogo. Reproduza a falha e tente novamente.", Toast.LENGTH_LONG).show();
+        }
+        Intent save = new Intent(Intent.ACTION_CREATE_DOCUMENT);
+        save.addCategory(Intent.CATEGORY_OPENABLE);
+        save.setType("application/zip");
+        save.putExtra(Intent.EXTRA_TITLE, "FarCry2-diagnostico.zip");
+        startActivityForResult(save, REQ_SAVE_LOGS);
+    }
+
+    private void addDiagnosticFile(String name, File file) {
+        if (!file.isFile()) return;
+        try (InputStream in = new FileInputStream(file); ByteArrayOutputStream out = new ByteArrayOutputStream()) {
+            byte[] buffer = new byte[8192];
+            int total = 0, n;
+            final int limit = 2 * 1024 * 1024;
+            while ((n = in.read(buffer)) != -1 && total < limit) {
+                int count = Math.min(n, limit - total);
+                out.write(buffer, 0, count);
+                total += count;
+            }
+            diagnosticFiles.put(name, out.toByteArray());
+        } catch (IOException e) {
+            diagnosticFiles.put(name + ".error.txt", ("Could not read " + name + ": " + e)
+                    .getBytes(java.nio.charset.StandardCharsets.UTF_8));
         }
     }
 
