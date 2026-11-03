@@ -1108,8 +1108,8 @@ public class Fc2LauncherActivity extends Activity {
         unpackDriver(label, () -> getContentResolver().openInputStream(uri));
     }
 
-    private void unpackDriver(final File zip) {
-        unpackDriver(zip.getName(), () -> new FileInputStream(zip));
+    private void unpackDriver(final File zip, final String label) {
+        unpackDriver(label, () -> new FileInputStream(zip));
     }
 
     /* Accepts the official PanVK adrenotools package as well as user-supplied
