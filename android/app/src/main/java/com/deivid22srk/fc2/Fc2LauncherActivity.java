@@ -46,7 +46,11 @@ import java.io.OutputStreamWriter;
 import java.io.Writer;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.net.HttpURLConnection;
+import java.net.URL;
 import java.security.MessageDigest;
+import org.json.JSONArray;
+import org.json.JSONObject;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -513,8 +517,8 @@ public class Fc2LauncherActivity extends Activity {
         LinearLayout drv = card();
         sectionTitle(drv, "DRIVER DE GPU");
         drv.addView(tv("Vulkan", 15, TEXT, medium));
-        TextView dsub = tv("Sistema usa o driver da Qualcomm. Um driver importado (Turnip) é usado "
-                + "no lugar dele — resolve bugs e às vezes destrava o jogo em Adreno. arm64.", 11, MUTED, regular);
+        TextView dsub = tv("Use o driver do sistema como padrão. Em GPUs Mali, importe PanVK; em Adreno, "
+                + "use Turnip. O pacote PanVK para Android usa o carregador adrenotools e requer arm64.", 11, MUTED, regular);
         dsub.setLineSpacing(dp(2), 1f);
         LinearLayout.LayoutParams dsubp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT);
@@ -528,13 +532,22 @@ public class Fc2LauncherActivity extends Activity {
         dlp.topMargin = dp(8);
         drv.addView(driverList, dlp);
 
-        TextView imp = tv("IMPORTAR DRIVER (.ZIP)", 11, TEXT, medium);
+        TextView panvk = tv("BAIXAR PANVK PARA MALI", 11, TEXT, medium);
+        panvk.setLetterSpacing(0.10f);
+        panvk.setGravity(Gravity.CENTER);
+        panvk.setBackground(press(gradient(0xFF3C4658, 0xFF202735, 100)));
+        tap(panvk, this::downloadPanvk);
+        LinearLayout.LayoutParams pvlp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(42));
+        pvlp.topMargin = dp(10);
+        drv.addView(panvk, pvlp);
+
+        TextView imp = tv("IMPORTAR OUTRO DRIVER (.ZIP)", 11, TEXT, medium);
         imp.setLetterSpacing(0.10f);
         imp.setGravity(Gravity.CENTER);
         imp.setBackground(press(shape(0x0DFFFFFF, 100, 0x33FFFFFF, 1.2f)));
         tap(imp, this::importDriver);
         LinearLayout.LayoutParams ilp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(42));
-        ilp.topMargin = dp(10);
+        ilp.topMargin = dp(8);
         drv.addView(imp, ilp);
 
         LinearLayout.LayoutParams drvp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
@@ -1004,7 +1017,7 @@ public class Fc2LauncherActivity extends Activity {
     private void refreshDrivers() {
         if (driverList == null) return;
         driverList.removeAllViews();
-        driverList.addView(driverRow("system", "Sistema (Qualcomm)", driverChoice().equals("system"), false));
+        driverList.addView(driverRow("system", "Sistema (padrão do aparelho)", driverChoice().equals("system"), false));
         for (String n : installedDrivers()) {
             divider(driverList);
             driverList.addView(driverRow(n, n, driverChoice().equals(n), true));
@@ -1021,7 +1034,11 @@ public class Fc2LauncherActivity extends Activity {
         dot.setBackground(selected ? dot(0xFFF5A03A, 0xFFF5A03A) : dot(0x00000000, 0xFF3E4452));
         row.addView(dot, new LinearLayout.LayoutParams(dp(14), dp(14)));
 
-        TextView t = tv(label, 14, selected ? TEXT : 0xFFC6CBD6, medium);
+        String lowerKey = key.toLowerCase(java.util.Locale.ROOT);
+        String shownLabel = lowerKey.contains("panvk") || lowerKey.contains("panfrost")
+                ? "PanVK (Mali) · " + label
+                : lowerKey.contains("turnip") ? "Turnip (Adreno) · " + label : label;
+        TextView t = tv(shownLabel, 14, selected ? TEXT : 0xFFC6CBD6, medium);
         LinearLayout.LayoutParams tlp = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
         tlp.leftMargin = dp(12);
         row.addView(t, tlp);
@@ -1084,62 +1101,155 @@ public class Fc2LauncherActivity extends Activity {
     /* The pack is a zip with libvulkan.so somewhere inside (usually at the top,
      * sometimes in a folder). Extract out of the UI thread and only then look
      * for the library, so a broken or huge archive cannot lock the launcher. */
+    private interface DriverZipSource { InputStream open() throws IOException; }
+
     private void unpackDriver(final Uri uri) {
         final String label = displayName(uri);
+        unpackDriver(label, () -> getContentResolver().openInputStream(uri));
+    }
+
+    private void unpackDriver(final File zip) {
+        unpackDriver(zip.getName(), () -> new FileInputStream(zip));
+    }
+
+    /* Accepts the official PanVK adrenotools package as well as user-supplied
+     * driver ZIPs. The native side receives the directory containing
+     * libvulkan.so; the package's companion files stay beside it. */
+    private void unpackDriver(final String label, final DriverZipSource source) {
         new Thread(() -> {
             File tmp = new File(getCacheDir(), "driver-import");
             deleteRecursive(tmp);
             tmp.mkdirs();
             String err = null;
             int files = 0;
-            try (java.io.InputStream in = getContentResolver().openInputStream(uri);
-                 java.util.zip.ZipInputStream z = new java.util.zip.ZipInputStream(in)) {
-                if (z == null || in == null) throw new java.io.IOException("não foi possível abrir o arquivo");
-                byte[] buf = new byte[1 << 16];
-                java.util.zip.ZipEntry e;
-                while ((e = z.getNextEntry()) != null) {
-                    String n = e.getName().replace('\\', '/');
-                    if (n.startsWith("/") || n.contains("..")) continue;
-                    File out = new File(tmp, n);
-                    if (e.isDirectory()) { out.mkdirs(); continue; }
-                    File parent = out.getParentFile();
-                    if (parent != null) parent.mkdirs();
-                    try (java.io.FileOutputStream fo = new java.io.FileOutputStream(out)) {
-                        int r;
-                        while ((r = z.read(buf)) > 0) fo.write(buf, 0, r);
+            try (InputStream raw = source.open()) {
+                if (raw == null) throw new IOException("não foi possível abrir o arquivo");
+                try (java.util.zip.ZipInputStream z = new java.util.zip.ZipInputStream(raw)) {
+                    byte[] buf = new byte[1 << 16];
+                    java.util.zip.ZipEntry e;
+                    while ((e = z.getNextEntry()) != null) {
+                        String n = e.getName().replace('\\\\', '/');
+                        if (n.startsWith("/") || n.contains("../") || n.equals("..")) continue;
+                        File out = new File(tmp, n);
+                        String root = tmp.getCanonicalPath() + File.separator;
+                        if (!out.getCanonicalPath().startsWith(root)) continue;
+                        if (e.isDirectory()) { out.mkdirs(); continue; }
+                        File parent = out.getParentFile();
+                        if (parent != null) parent.mkdirs();
+                        try (FileOutputStream fo = new FileOutputStream(out)) {
+                            int r;
+                            while ((r = z.read(buf)) > 0) fo.write(buf, 0, r);
+                        }
+                        files++;
                     }
-                    files++;
                 }
             } catch (Exception ex) {
                 err = ex.toString();
             }
 
-            File lib = err == null ? findVulkanLib(tmp, 3) : null;
-            if (err == null && lib == null) err = "o ZIP não tem libvulkan.so";
-
+            File lib = err == null ? findVulkanLib(tmp, 4) : null;
+            if (err == null && lib == null) err = "o ZIP não contém libvulkan.so";
             final String ferr = err;
             final File flib = lib;
             final int nfiles = files;
             runOnUiThread(() -> {
                 if (ferr != null) {
+                    deleteRecursive(tmp);
                     Toast.makeText(this, "Importação falhou: " + ferr, Toast.LENGTH_LONG).show();
                     return;
                 }
-                File src = flib.getParentFile();
+                File srcDir = flib.getParentFile();
                 String name = slug(label);
                 File dst = new File(driversDir(), name);
                 for (int i = 2; dst.exists(); i++) dst = new File(driversDir(), name + "-" + i);
-                if (!src.renameTo(dst) && !copyTree(src, dst)) {
-                    Toast.makeText(this, "Não foi possível gravar em " + dst, Toast.LENGTH_LONG).show();
+                if (!srcDir.renameTo(dst) && !copyTree(srcDir, dst)) {
+                    deleteRecursive(tmp);
+                    Toast.makeText(this, "Não foi possível gravar o driver", Toast.LENGTH_LONG).show();
                     return;
                 }
                 deleteRecursive(tmp);
                 prefs.edit().putString("driver", dst.getName()).apply();
                 refreshDrivers();
-                Toast.makeText(this, "Driver " + dst.getName() + " importado (" + nfiles
-                        + " arquivos). Vale no próximo JOGAR.", Toast.LENGTH_LONG).show();
+                Toast.makeText(this, "Driver " + dst.getName() + " instalado e selecionado. Vale no próximo JOGAR.", Toast.LENGTH_LONG).show();
             });
         }).start();
+    }
+
+    private void downloadPanvk() {
+        Toast.makeText(this, "Consultando a versão mais recente do PanVK…", Toast.LENGTH_SHORT).show();
+        new Thread(() -> {
+            File zip = new File(getCacheDir(), "panvk-adrenotools.zip");
+            try {
+                HttpURLConnection api = (HttpURLConnection) new URL(
+                        "https://api.github.com/repos/zenithblue-oss/panvk-kbase-android/releases/latest").openConnection();
+                api.setConnectTimeout(15000);
+                api.setReadTimeout(20000);
+                api.setRequestProperty("Accept", "application/vnd.github+json");
+                api.setRequestProperty("User-Agent", "FarCry2-Android-Launcher");
+                JSONObject release;
+                try (InputStream in = api.getInputStream()) {
+                    release = new JSONObject(new String(readAll(in, 2 * 1024 * 1024),
+                            java.nio.charset.StandardCharsets.UTF_8));
+                } finally { api.disconnect(); }
+
+                JSONArray assets = release.getJSONArray("assets");
+                String downloadUrl = null, expected = null, assetName = null;
+                for (int i = 0; i < assets.length(); i++) {
+                    JSONObject asset = assets.getJSONObject(i);
+                    String n = asset.optString("name", "");
+                    if (n.startsWith("Mesa-PanVK-Android-") && n.endsWith("-adrenotools.zip")) {
+                        downloadUrl = asset.getString("browser_download_url");
+                        expected = asset.optString("digest", "");
+                        assetName = n;
+                        break;
+                    }
+                }
+                if (downloadUrl == null) throw new IOException("pacote PanVK adrenotools não encontrado");
+                if (!expected.startsWith("sha256:")) throw new IOException("GitHub não informou SHA-256 do pacote");
+
+                HttpURLConnection dl = (HttpURLConnection) new URL(downloadUrl).openConnection();
+                dl.setConnectTimeout(20000);
+                dl.setReadTimeout(60000);
+                dl.setRequestProperty("User-Agent", "FarCry2-Android-Launcher");
+                MessageDigest digest = MessageDigest.getInstance("SHA-256");
+                long total = 0;
+                try (InputStream in = dl.getInputStream(); FileOutputStream out = new FileOutputStream(zip)) {
+                    byte[] buf = new byte[1 << 16];
+                    int n;
+                    while ((n = in.read(buf)) != -1) {
+                        total += n;
+                        if (total > 100L * 1024L * 1024L) throw new IOException("pacote excede o limite de 100 MB");
+                        digest.update(buf, 0, n);
+                        out.write(buf, 0, n);
+                    }
+                } finally { dl.disconnect(); }
+                StringBuilder actual = new StringBuilder();
+                for (byte b : digest.digest()) actual.append(String.format(java.util.Locale.ROOT, "%02x", b & 0xff));
+                if (!expected.substring("sha256:".length()).equalsIgnoreCase(actual.toString())) {
+                    throw new IOException("SHA-256 não confere; pacote descartado");
+                }
+                final String label = assetName;
+                runOnUiThread(() -> {
+                    Toast.makeText(this, "PanVK verificado. Instalando…", Toast.LENGTH_SHORT).show();
+                    unpackDriver(zip, label);
+                });
+            } catch (Exception e) {
+                zip.delete();
+                runOnUiThread(() -> Toast.makeText(this, "Não foi possível baixar o PanVK: "
+                        + e.getMessage(), Toast.LENGTH_LONG).show());
+            }
+        }).start();
+    }
+
+    private static byte[] readAll(InputStream in, int limit) throws IOException {
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        byte[] buf = new byte[8192];
+        int n;
+        while ((n = in.read(buf)) != -1) {
+            if (out.size() + n > limit) throw new IOException("resposta muito grande");
+            out.write(buf, 0, n);
+        }
+        return out.toByteArray();
     }
 
     private static File findVulkanLib(File dir, int depth) {
