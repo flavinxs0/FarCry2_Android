@@ -61,8 +61,8 @@ import java.util.zip.ZipOutputStream;
 /* Start screen: pick the folder that holds the Far Cry 2 install (the one with
  * bin/ and Data_Win32/), check that it is the build this port was recompiled
  * from, set the port options, press Play. The folder is passed to the native
- * side as argv[1]; the options are written to port/save/touch.cfg, which the
- * runtime reads.
+ * side as argv[1]; touch options are written to port/save/touch.cfg, while the
+ * render-height choice is passed as argv[4].
  *
  * The whole screen is built in code on purpose: the APK carries no AndroidX
  * and no layout resources, so the UI is framework views plus a handful of
@@ -96,6 +96,9 @@ public class Fc2LauncherActivity extends Activity {
     private TextView folderText, folderStatus, buildStatus, statusLine;
     private View playButton;
     private LinearLayout driverList;           /* the GPU-driver rows, rebuilt on demand */
+    private LinearLayout resolutionList;       /* render-height choices, rebuilt on demand */
+    private static final int[] RENDER_HEIGHT_OPTIONS = {0, 720, 540, 432, 360};
+    private int renderHeight;
     private FrameLayout homeScreen, settingsScreen;
     private final Map<String, CompoundButton> toggles = new LinkedHashMap<>();
     private final Map<String, byte[]> diagnosticFiles = new LinkedHashMap<>();
@@ -120,6 +123,7 @@ public class Fc2LauncherActivity extends Activity {
          * install had chosen. */
         if (prefs.contains("loglevel")) logLevel = prefs.getInt("loglevel", 1);
         else logLevel = prefs.getBoolean("logoff", false) ? 0 : prefs.getBoolean("debuglog", false) ? 2 : 1;
+        renderHeight = validRenderHeight(prefs.getInt("render_height", 0));
         buildUi();
         refreshFolder();
     }
@@ -555,6 +559,24 @@ public class Fc2LauncherActivity extends Activity {
         drvp.topMargin = dp(12);
         col.addView(drv, drvp);
 
+        LinearLayout resolution = card();
+        sectionTitle(resolution, "RESOLUÇÃO INTERNA");
+        TextView resolutionInfo = tv("A tela continua na resolução nativa; esta opção muda apenas o back buffer. "
+                + "Automático mantém o comportamento atual. A escolha vale ao iniciar o próximo jogo.",
+                11, MUTED, regular);
+        resolutionInfo.setLineSpacing(dp(2), 1f);
+        resolution.addView(resolutionInfo);
+        resolutionList = new LinearLayout(this);
+        resolutionList.setOrientation(LinearLayout.VERTICAL);
+        LinearLayout.LayoutParams resolutionRowsLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        resolutionRowsLp.topMargin = dp(8);
+        resolution.addView(resolutionList, resolutionRowsLp);
+        LinearLayout.LayoutParams resolutionCardLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        resolutionCardLp.topMargin = dp(12);
+        col.addView(resolution, resolutionCardLp);
+
         LinearLayout diag = card();
         sectionTitle(diag, "SALVAR LOGS PARA DIAGNÓSTICO");
         TextView diagText = tv("Depois de reproduzir o crash, volte ao launcher e salve o ZIP. "
@@ -580,7 +602,53 @@ public class Fc2LauncherActivity extends Activity {
         sv.addView(col, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT));
         refreshDrivers();
+        refreshResolutions();
         return sv;
+    }
+
+    private static int validRenderHeight(int height) {
+        for (int option : RENDER_HEIGHT_OPTIONS) if (option == height) return height;
+        return 0;
+    }
+
+    private void refreshResolutions() {
+        if (resolutionList == null) return;
+        resolutionList.removeAllViews();
+        for (int i = 0; i < RENDER_HEIGHT_OPTIONS.length; i++) {
+            if (i > 0) divider(resolutionList);
+            int height = RENDER_HEIGHT_OPTIONS[i];
+            resolutionList.addView(resolutionRow(height));
+        }
+    }
+
+    private View resolutionRow(int height) {
+        boolean selected = renderHeight == height;
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setPadding(0, dp(9), 0, dp(9));
+
+        View marker = new View(this);
+        marker.setBackground(selected ? dot(0xFFF5A03A, 0xFFF5A03A) : dot(0x00000000, 0xFF3E4452));
+        row.addView(marker, new LinearLayout.LayoutParams(dp(14), dp(14)));
+
+        String label = height == 0 ? "Automático (padrão atual)" : height + " px de altura";
+        TextView text = tv(label, 14, selected ? TEXT : 0xFFC6CBD6, medium);
+        LinearLayout.LayoutParams textLp = new LinearLayout.LayoutParams(0,
+                ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
+        textLp.leftMargin = dp(12);
+        row.addView(text, textLp);
+        tap(row, () -> setRenderHeight(height));
+        return row;
+    }
+
+    private void setRenderHeight(int height) {
+        renderHeight = validRenderHeight(height);
+        prefs.edit().putInt("render_height", renderHeight).apply();
+        refreshResolutions();
+        Toast.makeText(this, renderHeight == 0 ? "Resolução automática selecionada"
+                : "Back buffer: " + renderHeight + " px de altura (próxima inicialização)",
+                Toast.LENGTH_SHORT).show();
     }
 
     private void setLogLevel(int level) {
@@ -601,7 +669,7 @@ public class Fc2LauncherActivity extends Activity {
     private void resetDefaults() {
         prefs.edit().putBoolean("touch", true).putBoolean("hudctx", false)
                 .putBoolean("nintendo", false).putBoolean("vsync", true)
-                .putInt("loglevel", 1).apply();
+                .putInt("loglevel", 1).putInt("render_height", 0).apply();
         for (Map.Entry<String, CompoundButton> e : toggles.entrySet()) {
             String k = e.getKey();
             boolean def = k.equals("touch") || k.equals("vsync");
@@ -609,6 +677,8 @@ public class Fc2LauncherActivity extends Activity {
         }
         logLevel = 1;
         paintLogChips();
+        renderHeight = 0;
+        refreshResolutions();
         Toast.makeText(this, "Padrões restaurados", Toast.LENGTH_SHORT).show();
     }
 
@@ -805,6 +875,7 @@ public class Fc2LauncherActivity extends Activity {
         }
         info.append("\nLog level: ").append(logLevel == 0 ? "off" : logLevel == 1 ? "normal" : "debug")
                 .append("\nVulkan driver selection: ").append(driverChoice())
+                .append("\nInternal render height: ").append(renderHeight == 0 ? "automatic" : renderHeight + " px")
                 .append("\nGame folder selected: ").append(game == null ? "no" : "yes")
                 .append("\n\nThe bundle may contain runtime file paths and a native crash trace. Review before sharing.\n");
         diagnosticFiles.put("device_info.txt", info.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8));
@@ -1337,6 +1408,7 @@ public class Fc2LauncherActivity extends Activity {
         Intent i = new Intent(this, Fc2Activity.class);
         i.putExtra("game", folder);
         i.putExtra("driver", driverPath());
+        i.putExtra("renderHeight", renderHeight);
         startActivity(i);
         finish();
     }

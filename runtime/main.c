@@ -11,6 +11,7 @@
 #include <string.h>
 #include <strings.h>
 #include <ctype.h>
+#include <stdlib.h>
 #include <fcntl.h>
 #include <dirent.h>
 #include <errno.h>
@@ -454,24 +455,32 @@ static void check_game_dir(void) {
         rt_fatal("missing from %s: %s (the DLLs may also sit in a redist subfolder)", g_game_dir, missing);
 }
 
-/* Set by the launcher through argv (see UsmActivity.getArguments): the folder of
- * a user supplied libvulkan.so, empty for the system driver, and the APK's
- * native library dir, where libadrenotools' hook libraries live. */
+/* Launcher arguments: argv[1] is the game folder, argv[2] the optional
+ * user-supplied Vulkan driver directory, argv[3] the APK native-library
+ * directory for libadrenotools, and argv[4] the optional render height. */
 char g_driver_dir[1024];
 char g_native_lib_dir[1024];
+uint32_t g_render_height;
 
 int main(int argc, char **argv) {
     install_crash_handler();
     const char *env = getenv("LB_LOG");
     if (env) g_log_level = atoi(env);
 #ifdef __ANDROID__
-    /* With the launcher (argv[1] = the Skyrim folder) everything the port
+    /* With the launcher (argv[1] = the Far Cry 2 folder) everything the port
      * writes lives in <game>/port: log.txt, save/ (Documents, INIs, saves).
      * Without it, the app's external files folder is used as before. */
     {
         char base[1024] = "";
         if (argc > 2) snprintf(g_driver_dir, sizeof g_driver_dir, "%s", argv[2]);
         if (argc > 3) snprintf(g_native_lib_dir, sizeof g_native_lib_dir, "%s", argv[3]);
+        if (argc > 4) {
+            char *end = NULL;
+            unsigned long h = strtoul(argv[4], &end, 10);
+            if (end != argv[4] && *end == '\0' &&
+                (h == 720 || h == 540 || h == 432 || h == 360))
+                g_render_height = (uint32_t)h;
+        }
         if (argc > 1) {
             snprintf(g_game_dir, sizeof g_game_dir, "%s", argv[1]);
             snprintf(base, sizeof base, "%s/port", argv[1]);
@@ -510,6 +519,8 @@ int main(int argc, char **argv) {
                 freopen("/dev/null", "w", stderr);
             }
         }
+        if (g_render_height)
+            LOG("launcher render height: %u px", g_render_height);
 
         argc = 1;  /* consumed */
     }

@@ -19,19 +19,20 @@ public class Fc2Activity extends SDLActivity {
         return new String[] { "SDL2", "dxvk_d3d9", "main" };
     }
 
-    /* argv[1] = game folder, argv[2] = folder with the user's libvulkan.so ("" for
-     * the system driver), argv[3] = nativeLibraryDir, where libadrenotools' hook
-     * libraries live. The last one has to be passed in: libadrenotools builds a
-     * linker namespace rooted there. */
+    /* argv[1] = game folder, argv[2] = user's libvulkan.so folder ("" for the
+     * system driver), argv[3] = nativeLibraryDir for libadrenotools, and argv[4]
+     * = selected back-buffer height (0 keeps the current automatic behavior). */
     @Override
     protected String[] getArguments() {
         String game = getIntent().getStringExtra("game");
         if (game == null) return new String[0];
         String driver = getIntent().getStringExtra("driver");
+        int renderHeight = getIntent().getIntExtra("renderHeight", 0);
         return new String[] {
                 game,
                 driver == null ? "" : driver,
-                getApplicationInfo().nativeLibraryDir };
+                getApplicationInfo().nativeLibraryDir,
+                Integer.toString(renderHeight) };
     }
 
     @Override

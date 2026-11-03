@@ -220,11 +220,9 @@ void B_IDirect3D9_GetAdapterIdentifier(CPU *c) {
     RET((uint32_t)hr, 4);
 }
 
-// Display modes: a fixed list of heights (never above the window's) at the
-// window's aspect ratio; the launcher offers the same list as "Resolution"
-// and writes the chosen one to SkyrimPrefs.ini (the game only accepts a size
-// that is in this list). The chosen mode becomes the back buffer, which dxvk
-// scales up to the window.
+// Display modes: the game can enumerate these back-buffer heights at the
+// window's aspect ratio. The launcher can force a practical subset; DXVK then
+// scales the selected back buffer to the full SDL window.
 static const uint32_t k_mode_heights[] = {1080, 900, 720, 648, 576, 540, 480, 432, 360, 288, 270, 216, 180, 144, 108};
 static uint32_t mode_count(int *ww, int *wh) {
     *ww = 1280; *wh = 720;
@@ -245,14 +243,22 @@ extern "C" void bridge_scaled_mode(uint32_t i, uint32_t *w, uint32_t *h) {
     }
 }
 
-/* The game keeps its own resolution in pcconfig.txt, and on a first run that
- * is its 4:3 default (800x600) while the phone's window is 19.5:9: dxvk blits
- * the back buffer across the whole window, so the frame -- the game's UI *and*
- * the touch overlay, which is laid out from the back buffer's own aspect --
- * came out stretched ~1.6x horizontally. Replace any size that is not at the
- * window's aspect with the window's own size, the first entry of the list the
- * game's "Resolution Scale" menu offers, so the blit is 1:1. An in-game
- * Resolution Scale choice is already at the window's aspect and is kept. */
+/* Widths in the advertised mode list are rounded down to an even number.
+ * Compare against that exact mapping; a strict aspect cross-product would
+ * incorrectly discard valid modes such as 916x432 on a 2292x1080 display. */
+static bool is_supported_backbuffer(uint32_t bw, uint32_t bh, int ww, int wh) {
+    if (bw == (uint32_t)ww && bh == (uint32_t)wh) return true;
+    for (uint32_t h : k_mode_heights) {
+        if ((int)h >= wh) continue;
+        uint32_t w = (uint32_t)((uint64_t)h * (uint32_t)ww / (uint32_t)wh) & ~1u;
+        if (bw == w && bh == h) return true;
+    }
+    return false;
+}
+
+/* In automatic mode, advertised scaled modes are retained and the aspect
+ * correction below sends other mismatched back buffers to the full SDL window.
+ * An explicit launcher height takes precedence and is applied in pp_fix_size. */
 
 /* ---- USM display sync ----------------------------------------------------
  * Fixing the present parameters alone still renders the frame into a 4:3 box
@@ -382,6 +388,7 @@ static void hold_aspect(void) {
 } // namespace usm_display
 #endif /* GAME_USM */
 
+extern "C" uint32_t g_render_height;
 static void pp_fix_size(D3DPRESENT_PARAMETERS *pp) {
     int ww = 0, wh = 0;
     platform_window_size(&ww, &wh);
@@ -389,8 +396,22 @@ static void pp_fix_size(D3DPRESENT_PARAMETERS *pp) {
     /* GetClientRect / GetCursorPos / the touch cursor all live in this space,
      * and the game's widget hit-test divides the cursor by it. */
     user32_set_screen(ww, wh);
+    if (g_render_height) {
+        uint32_t h = g_render_height > (uint32_t)wh ? (uint32_t)wh : g_render_height;
+        uint32_t w = h == (uint32_t)wh ? (uint32_t)ww
+                : (uint32_t)((uint64_t)h * (uint32_t)ww / (uint32_t)wh) & ~1u;
+        if (w < 2) w = 2;
+        LOG("launcher render target: %ux%u (window %dx%d)", w, h, ww, wh);
+        pp->BackBufferWidth = w;
+        pp->BackBufferHeight = h;
+#ifdef GAME_USM
+        usm_display::sync_size((int)w, (int)h);
+#endif
+        return;
+    }
     uint32_t bw = pp->BackBufferWidth, bh = pp->BackBufferHeight;
     if (!bw || !bh) return;
+    if (is_supported_backbuffer(bw, bh, ww, wh)) return;
     /* Same aspect when bw/bh == ww/wh, i.e. bw*wh == bh*ww. The old test
      * compared that area-sized cross product against wh (a height), so a
      * back buffer a few pixels off the window's aspect was not corrected. */
