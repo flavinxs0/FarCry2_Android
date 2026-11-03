@@ -1128,7 +1128,7 @@ public class Fc2LauncherActivity extends Activity {
                     byte[] buf = new byte[1 << 16];
                     java.util.zip.ZipEntry e;
                     while ((e = z.getNextEntry()) != null) {
-                        String n = e.getName().replace('\\\\', '/');
+                        String n = e.getName().replace((char) 92, '/');
                         if (n.startsWith("/") || n.contains("../") || n.equals("..")) continue;
                         File out = new File(tmp, n);
                         String root = tmp.getCanonicalPath() + File.separator;
