@@ -1,6 +1,7 @@
 name: build
 
 # The APK is only ever built here, never on a developer machine.
+# PanVK integration branch is included in push CI for APK validation.
 #
 # Two modes, chosen by the repository variable GEN_REPO:
 #
