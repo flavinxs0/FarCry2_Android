@@ -6,7 +6,13 @@
 #include "dxvk_spec_const.h"
 #include "dxvk_state_cache.h"
 
+#include <atomic>
+#include <cstdint>
+#include <cstdlib>
+
 namespace dxvk {
+
+  static std::atomic<uint64_t> g_pipelineDiagnosticSequence { 0 };
 
   DxvkGraphicsPipeline::DxvkGraphicsPipeline(
           DxvkPipelineManager*        pipeMgr,
@@ -411,12 +417,29 @@ namespace dxvk {
       t0 = dxvk::high_resolution_clock::now();
     
     VkPipeline pipeline = VK_NULL_HANDLE;
-    if (m_vkd->vkCreateGraphicsPipelines(m_vkd->device(),
-          m_pipeMgr->m_cache->handle(), 1, &info, nullptr, &pipeline) != VK_SUCCESS) {
+    const char* diagnosticDir = std::getenv("DXVK_DIAGNOSTIC_DIR");
+    const bool diagnosticEnabled = diagnosticDir && *diagnosticDir;
+    const uint64_t diagnosticId = diagnosticEnabled
+      ? g_pipelineDiagnosticSequence.fetch_add(1, std::memory_order_relaxed) + 1
+      : 0;
+
+    if (diagnosticEnabled) {
+      Logger::info(str::format("PIPELINE_BEGIN id=", diagnosticId));
+      this->logPipelineState(LogLevel::Info, state);
+    }
+
+    VkResult pipelineResult = m_vkd->vkCreateGraphicsPipelines(m_vkd->device(),
+          m_pipeMgr->m_cache->handle(), 1, &info, nullptr, &pipeline);
+    if (pipelineResult != VK_SUCCESS) {
+      if (diagnosticEnabled)
+        Logger::info(str::format("PIPELINE_END id=", diagnosticId, " result=", pipelineResult));
       Logger::err("DxvkGraphicsPipeline: Failed to compile pipeline");
       this->logPipelineState(LogLevel::Error, state);
       return VK_NULL_HANDLE;
     }
+
+    if (diagnosticEnabled)
+      Logger::info(str::format("PIPELINE_END id=", diagnosticId, " result=VK_SUCCESS"));
     
     if (Logger::logLevel() <= LogLevel::Debug) {
       t1 = dxvk::high_resolution_clock::now();

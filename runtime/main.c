@@ -531,10 +531,20 @@ int main(int argc, char **argv) {
     if (MEM == MAP_FAILED) rt_fatal("cannot reserve guest address space");
     /* keep the null page inaccessible to catch null derefs */
     mprotect(MEM, 0x10000, PROT_NONE);
-    rt_init_shims();
-    { extern void rt_watchdog_start(void); rt_watchdog_start(); }
     /* dxvk writes its pipeline state cache to the working directory; keep the game folder clean */
     if (!getenv("DXVK_STATE_CACHE_PATH")) setenv("DXVK_STATE_CACHE_PATH", g_save_dir, 1);
+    /* Keep DXVK logs in the per-install save directory. */
+    if (!getenv("DXVK_LOG_PATH")) setenv("DXVK_LOG_PATH", g_save_dir, 1);
+    /* The launcher's Debug log level opts in to the heavier shader capture. */
+    if (g_log_level >= 2 && !getenv("DXVK_DIAGNOSTIC_DIR")) {
+        char diagnostic_dir[1200];
+        snprintf(diagnostic_dir, sizeof diagnostic_dir, "%s/fc2_shader_dumps", g_save_dir);
+        mkdir(diagnostic_dir, 0777);
+        setenv("DXVK_DIAGNOSTIC_DIR", diagnostic_dir, 1);
+    }
+    if (g_log_level >= 2 && !getenv("DXVK_LOG_LEVEL")) setenv("DXVK_LOG_LEVEL", "debug", 1);
+    rt_init_shims();
+    { extern void rt_watchdog_start(void); rt_watchdog_start(); }
     /* 0.2.6: no compile status HUD (as in 0.1.5); DXVK_HUD=portstatus enables it. */
     check_game_dir();
 #if defined(GAME_USM) || defined(GAME_FC2)
