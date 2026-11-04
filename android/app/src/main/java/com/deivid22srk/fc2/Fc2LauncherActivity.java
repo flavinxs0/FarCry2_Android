@@ -884,6 +884,19 @@ public class Fc2LauncherActivity extends Activity {
             addDiagnosticFile("game_log.txt", new File(port, "log.txt"));
             addDiagnosticFile("last_exit.txt", new File(port, "last_exit.txt"));
             addDiagnosticFile("native_trace.bin", new File(port, "native_trace.bin"));
+            File save = new File(port, "save");
+            File[] saveFiles = save.listFiles();
+            if (saveFiles != null) {
+                for (File file : saveFiles) {
+                    if (file.isFile() && (file.getName().endsWith("_dxvk.log") || file.getName().equals("dxvk.log")))
+                        addDiagnosticFile("dxvk/" + file.getName(), file);
+                }
+            }
+            if (logLevel >= 2) {
+                File shaderDir = new File(save, "fc2_shader_dumps");
+                addDiagnosticFile("dxvk/pipeline_events.txt", new File(shaderDir, "pipeline_events.txt"));
+                addShaderDiagnostics(shaderDir);
+            }
         }
         if (diagnosticFiles.size() == 1) {
             Toast.makeText(this, "Ainda não há log do jogo. Reproduza a falha e tente novamente.", Toast.LENGTH_LONG).show();
@@ -900,16 +913,58 @@ public class Fc2LauncherActivity extends Activity {
         try (InputStream in = new FileInputStream(file); ByteArrayOutputStream out = new ByteArrayOutputStream()) {
             byte[] buffer = new byte[8192];
             int total = 0, n;
-            final int limit = 2 * 1024 * 1024;
+            final int limit = name.endsWith(".spv") ? 2 * 1024 * 1024 : 8 * 1024 * 1024;
+            long fileLength = file.length();
+            boolean truncated = fileLength > limit;
+            long skip = Math.max(0L, fileLength - limit);
+            while (skip > 0) {
+                long skipped = in.skip(skip);
+                if (skipped <= 0) {
+                    if (in.read() == -1) break;
+                    skipped = 1;
+                }
+                skip -= skipped;
+            }
             while ((n = in.read(buffer)) != -1 && total < limit) {
                 int count = Math.min(n, limit - total);
                 out.write(buffer, 0, count);
                 total += count;
             }
             diagnosticFiles.put(name, out.toByteArray());
+            if (truncated) {
+                String notice = "Only the last " + limit + " bytes included: " + name + "\n";
+                diagnosticFiles.put(name + ".truncated.txt",
+                        notice.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            }
         } catch (IOException e) {
             diagnosticFiles.put(name + ".error.txt", ("Could not read " + name + ": " + e)
                     .getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        }
+    }
+
+    /* Include the SPIR-V modules submitted to Vulkan, capped at 32 MiB total. */
+    private void addShaderDiagnostics(File directory) {
+        File[] files = directory.listFiles();
+        if (files == null) return;
+        java.util.Arrays.sort(files, (a, b) -> a.getName().compareTo(b.getName()));
+        long total = 0;
+        final long totalLimit = 32L * 1024L * 1024L;
+        for (File file : files) {
+            if (!file.isFile() || !file.getName().endsWith(".spv")) continue;
+            if (total >= totalLimit) {
+                String notice = "SPIR-V capture truncated at 32 MiB; reproduce with fewer pipeline variants.\n";
+                diagnosticFiles.put("dxvk/shader_capture_notice.txt",
+                        notice.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                break;
+            }
+            if (file.length() > 2L * 1024L * 1024L) {
+                String notice = "Skipped oversized SPIR-V file: " + file.getName() + "\n";
+                diagnosticFiles.put("dxvk/shader_capture_notice.txt",
+                        notice.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                continue;
+            }
+            addDiagnosticFile("dxvk/shaders/" + file.getName(), file);
+            total += Math.min(file.length(), 2L * 1024L * 1024L);
         }
     }
 

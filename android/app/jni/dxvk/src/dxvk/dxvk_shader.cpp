@@ -1,6 +1,11 @@
 #include "dxvk_shader.h"
 
 #include <algorithm>
+#include <cctype>
+#include <cstdlib>
+#include <fstream>
+#include <iomanip>
+#include <sstream>
 #include <unordered_map>
 #include <unordered_set>
 
@@ -75,6 +80,28 @@ namespace dxvk {
     info.flags    = 0;
     info.codeSize = code.size();
     info.pCode    = code.data();
+
+    /* Diagnostic-only: preserve the exact, remapped SPIR-V submitted to
+     * vkCreateShaderModule. The runtime sets this path for diagnostic builds. */
+    const char* diagnosticDir = std::getenv("DXVK_DIAGNOSTIC_DIR");
+    if (diagnosticDir && *diagnosticDir) {
+      std::string shaderName = shader->debugName();
+      for (char& c : shaderName) {
+        if (!std::isalnum(static_cast<unsigned char>(c)) && c != '_' && c != '-')
+          c = '_';
+      }
+
+      std::ostringstream path;
+      path << diagnosticDir << "/shader_"
+           << static_cast<uint32_t>(shader->stage()) << "_"
+           << std::hex << shader->getHash() << "_"
+           << shaderName.substr(0, 96) << ".spv";
+      std::ofstream dump(path.str(), std::ios::out | std::ios::binary | std::ios::trunc);
+      if (dump) {
+        code.store(dump);
+        dump.flush();
+      }
+    }
     
     if (m_vkd->vkCreateShaderModule(m_vkd->device(), &info, nullptr, &m_stage.module) != VK_SUCCESS)
       throw DxvkError("DxvkComputePipeline::DxvkComputePipeline: Failed to create shader module");
