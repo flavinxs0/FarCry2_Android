@@ -892,7 +892,11 @@ public class Fc2LauncherActivity extends Activity {
                         addDiagnosticFile("dxvk/" + file.getName(), file);
                 }
             }
-            addShaderDiagnostics(new File(save, "fc2_shader_dumps"));
+            if (logLevel >= 2) {
+                File shaderDir = new File(save, "fc2_shader_dumps");
+                addDiagnosticFile("dxvk/pipeline_events.txt", new File(shaderDir, "pipeline_events.txt"));
+                addShaderDiagnostics(shaderDir);
+            }
         }
         if (diagnosticFiles.size() == 1) {
             Toast.makeText(this, "Ainda não há log do jogo. Reproduza a falha e tente novamente.", Toast.LENGTH_LONG).show();
@@ -910,7 +914,17 @@ public class Fc2LauncherActivity extends Activity {
             byte[] buffer = new byte[8192];
             int total = 0, n;
             final int limit = name.endsWith(".spv") ? 2 * 1024 * 1024 : 8 * 1024 * 1024;
-            boolean truncated = file.length() > limit;
+            long fileLength = file.length();
+            boolean truncated = fileLength > limit;
+            long skip = Math.max(0L, fileLength - limit);
+            while (skip > 0) {
+                long skipped = in.skip(skip);
+                if (skipped <= 0) {
+                    if (in.read() == -1) break;
+                    skipped = 1;
+                }
+                skip -= skipped;
+            }
             while ((n = in.read(buffer)) != -1 && total < limit) {
                 int count = Math.min(n, limit - total);
                 out.write(buffer, 0, count);
@@ -918,7 +932,7 @@ public class Fc2LauncherActivity extends Activity {
             }
             diagnosticFiles.put(name, out.toByteArray());
             if (truncated) {
-                String notice = "File truncated at " + limit + " bytes: " + name + "\n";
+                String notice = "Only the last " + limit + " bytes included: " + name + "\n";
                 diagnosticFiles.put(name + ".truncated.txt",
                         notice.getBytes(java.nio.charset.StandardCharsets.UTF_8));
             }

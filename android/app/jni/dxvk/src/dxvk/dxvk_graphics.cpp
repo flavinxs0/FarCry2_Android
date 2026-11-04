@@ -9,6 +9,7 @@
 #include <atomic>
 #include <cstdint>
 #include <cstdlib>
+#include <fstream>
 
 namespace dxvk {
 
@@ -426,20 +427,48 @@ namespace dxvk {
     if (diagnosticEnabled) {
       Logger::info(str::format("PIPELINE_BEGIN id=", diagnosticId));
       this->logPipelineState(LogLevel::Info, state);
+
+      std::ofstream events(std::string(diagnosticDir) + "/pipeline_events.txt",
+        std::ios::out | std::ios::app);
+      if (events) {
+        events << "PIPELINE_BEGIN id=" << diagnosticId
+               << " stages=" << info.stageCount << std::endl;
+        auto writeShader = [&events](const char* stage, const Rc<DxvkShader>& shader) {
+          if (shader != nullptr)
+            events << "  " << stage << " name=" << shader->debugName()
+                   << " hash=0x" << std::hex << shader->getHash() << std::dec << std::endl;
+        };
+        writeShader("vs",  m_shaders.vs);
+        writeShader("tcs", m_shaders.tcs);
+        writeShader("tes", m_shaders.tes);
+        writeShader("gs",  m_shaders.gs);
+        writeShader("fs",  m_shaders.fs);
+        events.flush();
+      }
     }
 
     VkResult pipelineResult = m_vkd->vkCreateGraphicsPipelines(m_vkd->device(),
           m_pipeMgr->m_cache->handle(), 1, &info, nullptr, &pipeline);
     if (pipelineResult != VK_SUCCESS) {
-      if (diagnosticEnabled)
+      if (diagnosticEnabled) {
         Logger::info(str::format("PIPELINE_END id=", diagnosticId, " result=", pipelineResult));
+        std::ofstream events(std::string(diagnosticDir) + "/pipeline_events.txt",
+          std::ios::out | std::ios::app);
+        if (events) events << "PIPELINE_END id=" << diagnosticId
+                           << " result=" << pipelineResult << std::endl;
+      }
       Logger::err("DxvkGraphicsPipeline: Failed to compile pipeline");
       this->logPipelineState(LogLevel::Error, state);
       return VK_NULL_HANDLE;
     }
 
-    if (diagnosticEnabled)
+    if (diagnosticEnabled) {
       Logger::info(str::format("PIPELINE_END id=", diagnosticId, " result=VK_SUCCESS"));
+      std::ofstream events(std::string(diagnosticDir) + "/pipeline_events.txt",
+        std::ios::out | std::ios::app);
+      if (events) events << "PIPELINE_END id=" << diagnosticId
+                         << " result=VK_SUCCESS" << std::endl;
+    }
     
     if (Logger::logLevel() <= LogLevel::Debug) {
       t1 = dxvk::high_resolution_clock::now();
