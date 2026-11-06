@@ -5,11 +5,14 @@
 #include "dxvk_pipemanager.h"
 #include "dxvk_spec_const.h"
 #include "dxvk_state_cache.h"
+#include "dxvk_mali_ab_test_shaders.h"
 
 #include <atomic>
 #include <cstdint>
 #include <cstdlib>
+#include <cstring>
 #include <fstream>
+#include <string>
 
 namespace dxvk {
 
@@ -197,6 +200,53 @@ namespace dxvk {
     if (tesm) stages.push_back(tesm.stageInfo(&specInfo));
     if (gsm)  stages.push_back(gsm.stageInfo(&specInfo));
     if (fsm)  stages.push_back(fsm.stageInfo(&specInfo));
+
+    const char* maliTestMode = std::getenv("DXVK_MALI_SHADER_TEST");
+    const bool isMaliCrashPair = m_shaders.vs != nullptr && m_shaders.fs != nullptr
+      && m_shaders.vs->debugName() == "VS_8bf34f5ac97a77f02234b24a8f9d7edda3c8dd24"
+      && m_shaders.fs->debugName() == "FS_84798cdee2d9b22a627739cbdb59ecc4b9146c19";
+    const bool replaceMaliVs = isMaliCrashPair && maliTestMode
+      && std::strcmp(maliTestMode, "replace-vs") == 0;
+    const bool replaceMaliFs = isMaliCrashPair && maliTestMode
+      && std::strcmp(maliTestMode, "replace-fs") == 0;
+
+    VkShaderModule maliTestVs = VK_NULL_HANDLE;
+    VkShaderModule maliTestFs = VK_NULL_HANDLE;
+    auto createMaliTestModule = [this](const uint32_t* code, size_t codeSize, VkShaderModule* module) {
+      VkShaderModuleCreateInfo moduleInfo = { };
+      moduleInfo.sType    = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
+      moduleInfo.codeSize = codeSize;
+      moduleInfo.pCode    = code;
+      return m_vkd->vkCreateShaderModule(m_vkd->device(), &moduleInfo, nullptr, module);
+    };
+
+    VkResult maliTestResult = VK_SUCCESS;
+    if (replaceMaliVs)
+      maliTestResult = createMaliTestModule(g_maliAbVertexSpirv, g_maliAbVertexSpirvSize, &maliTestVs);
+    if (maliTestResult == VK_SUCCESS && replaceMaliFs)
+      maliTestResult = createMaliTestModule(g_maliAbFragmentSpirv, g_maliAbFragmentSpirvSize, &maliTestFs);
+
+    if (maliTestResult != VK_SUCCESS) {
+      if (maliTestVs != VK_NULL_HANDLE)
+        m_vkd->vkDestroyShaderModule(m_vkd->device(), maliTestVs, nullptr);
+      if (maliTestFs != VK_NULL_HANDLE)
+        m_vkd->vkDestroyShaderModule(m_vkd->device(), maliTestFs, nullptr);
+      Logger::err(str::format("Mali A/B test shader module creation failed: ", maliTestResult));
+      return VK_NULL_HANDLE;
+    }
+
+    if (replaceMaliVs || replaceMaliFs) {
+      for (auto& stage : stages) {
+        if (replaceMaliVs && stage.stage == VK_SHADER_STAGE_VERTEX_BIT) {
+          stage.module = maliTestVs;
+          stage.pSpecializationInfo = nullptr;
+        }
+        if (replaceMaliFs && stage.stage == VK_SHADER_STAGE_FRAGMENT_BIT) {
+          stage.module = maliTestFs;
+          stage.pSpecializationInfo = nullptr;
+        }
+      }
+    }
 
     // Fix up color write masks using the component mappings
     std::array<VkPipelineColorBlendAttachmentState, MaxNumRenderTargets> omBlendAttachments;
@@ -433,6 +483,8 @@ namespace dxvk {
       if (events) {
         events << "PIPELINE_BEGIN id=" << diagnosticId
                << " stages=" << info.stageCount << std::endl;
+        if (replaceMaliVs) events << "  mali_ab_test=replace-vs" << std::endl;
+        if (replaceMaliFs) events << "  mali_ab_test=replace-fs" << std::endl;
         auto writeShader = [&events](const char* stage, const Rc<DxvkShader>& shader) {
           if (shader != nullptr)
             events << "  " << stage << " name=" << shader->debugName()
@@ -449,6 +501,10 @@ namespace dxvk {
 
     VkResult pipelineResult = m_vkd->vkCreateGraphicsPipelines(m_vkd->device(),
           m_pipeMgr->m_cache->handle(), 1, &info, nullptr, &pipeline);
+    if (maliTestVs != VK_NULL_HANDLE)
+      m_vkd->vkDestroyShaderModule(m_vkd->device(), maliTestVs, nullptr);
+    if (maliTestFs != VK_NULL_HANDLE)
+      m_vkd->vkDestroyShaderModule(m_vkd->device(), maliTestFs, nullptr);
     if (pipelineResult != VK_SUCCESS) {
       if (diagnosticEnabled) {
         Logger::info(str::format("PIPELINE_END id=", diagnosticId, " result=", pipelineResult));

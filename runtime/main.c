@@ -457,7 +457,8 @@ static void check_game_dir(void) {
 
 /* Launcher arguments: argv[1] is the game folder, argv[2] the optional
  * user-supplied Vulkan driver directory, argv[3] the APK native-library
- * directory for libadrenotools, and argv[4] the optional render height. */
+ * directory for libadrenotools, argv[4] the optional render height, and
+ * argv[5] the optional Mali A/B shader-test mode. */
 char g_driver_dir[1024];
 char g_native_lib_dir[1024];
 uint32_t g_render_height;
@@ -517,6 +518,19 @@ int main(int argc, char **argv) {
                 /* logs fully off: send stderr to nowhere (a fresh log.txt is still removed) */
                 unlink(logp);
                 freopen("/dev/null", "w", stderr);
+            }
+        }
+        if (argc > 5) {
+            unsetenv("DXVK_MALI_SHADER_TEST");
+            if (g_log_level >= 2) {
+                int mali_test = atoi(argv[5]);
+                if (mali_test == 1) {
+                    setenv("DXVK_MALI_SHADER_TEST", "replace-vs", 1);
+                    LOG("Mali shader A/B test: replace vertex shader");
+                } else if (mali_test == 2) {
+                    setenv("DXVK_MALI_SHADER_TEST", "replace-fs", 1);
+                    LOG("Mali shader A/B test: replace fragment shader");
+                }
             }
         }
         if (g_render_height)

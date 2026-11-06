@@ -97,8 +97,10 @@ public class Fc2LauncherActivity extends Activity {
     private View playButton;
     private LinearLayout driverList;           /* the GPU-driver rows, rebuilt on demand */
     private LinearLayout resolutionList;       /* render-height choices, rebuilt on demand */
+    private LinearLayout maliShaderTestList;    /* controlled substitutions for one Mali shader pair */
     private static final int[] RENDER_HEIGHT_OPTIONS = {0, 720, 540, 432, 360};
     private int renderHeight;
+    private int maliShaderTest;
     private FrameLayout homeScreen, settingsScreen;
     private final Map<String, CompoundButton> toggles = new LinkedHashMap<>();
     private final Map<String, byte[]> diagnosticFiles = new LinkedHashMap<>();
@@ -124,6 +126,7 @@ public class Fc2LauncherActivity extends Activity {
         if (prefs.contains("loglevel")) logLevel = prefs.getInt("loglevel", 1);
         else logLevel = prefs.getBoolean("logoff", false) ? 0 : prefs.getBoolean("debuglog", false) ? 2 : 1;
         renderHeight = validRenderHeight(prefs.getInt("render_height", 0));
+        maliShaderTest = Math.max(0, Math.min(2, prefs.getInt("mali_shader_test", 0)));
         buildUi();
         refreshFolder();
     }
@@ -577,6 +580,24 @@ public class Fc2LauncherActivity extends Activity {
         resolutionCardLp.topMargin = dp(12);
         col.addView(resolution, resolutionCardLp);
 
+        LinearLayout maliTest = card();
+        sectionTitle(maliTest, "ISOLAMENTO A/B DA MALI");
+        TextView maliTestInfo = tv("Teste temporário, somente em DEBUG e somente no par de shaders que falha. "
+                + "Substitui um estágio por um shader mínimo; a imagem pode ficar incorreta. Depois, volte para Desativado.",
+                11, MUTED, regular);
+        maliTestInfo.setLineSpacing(dp(2), 1f);
+        maliTest.addView(maliTestInfo);
+        maliShaderTestList = new LinearLayout(this);
+        maliShaderTestList.setOrientation(LinearLayout.VERTICAL);
+        LinearLayout.LayoutParams maliTestRowsLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        maliTestRowsLp.topMargin = dp(8);
+        maliTest.addView(maliShaderTestList, maliTestRowsLp);
+        LinearLayout.LayoutParams maliTestCardLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        maliTestCardLp.topMargin = dp(12);
+        col.addView(maliTest, maliTestCardLp);
+
         LinearLayout diag = card();
         sectionTitle(diag, "SALVAR LOGS PARA DIAGNÓSTICO");
         TextView diagText = tv("Depois de reproduzir o crash, volte ao launcher e salve o ZIP. "
@@ -603,6 +624,7 @@ public class Fc2LauncherActivity extends Activity {
                 ViewGroup.LayoutParams.WRAP_CONTENT));
         refreshDrivers();
         refreshResolutions();
+        refreshMaliShaderTests();
         return sv;
     }
 
@@ -651,6 +673,47 @@ public class Fc2LauncherActivity extends Activity {
                 Toast.LENGTH_SHORT).show();
     }
 
+    private void refreshMaliShaderTests() {
+        if (maliShaderTestList == null) return;
+        maliShaderTestList.removeAllViews();
+        String[] labels = {"Desativado — shaders originais",
+                "Substituir vertex (manter fragment original)",
+                "Substituir fragment (manter vertex original)"};
+        for (int mode = 0; mode < labels.length; mode++) {
+            if (mode > 0) divider(maliShaderTestList);
+            boolean selected = maliShaderTest == mode;
+            LinearLayout row = new LinearLayout(this);
+            row.setOrientation(LinearLayout.HORIZONTAL);
+            row.setGravity(Gravity.CENTER_VERTICAL);
+            row.setPadding(0, dp(9), 0, dp(9));
+            View marker = new View(this);
+            marker.setBackground(selected ? dot(0xFFF5A03A, 0xFFF5A03A) : dot(0x00000000, 0xFF3E4452));
+            row.addView(marker, new LinearLayout.LayoutParams(dp(14), dp(14)));
+            TextView text = tv(labels[mode], 14, selected ? TEXT : 0xFFC6CBD6, medium);
+            LinearLayout.LayoutParams textLp = new LinearLayout.LayoutParams(0,
+                    ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
+            textLp.leftMargin = dp(12);
+            row.addView(text, textLp);
+            final int selectedMode = mode;
+            tap(row, () -> setMaliShaderTest(selectedMode));
+            maliShaderTestList.addView(row);
+        }
+    }
+
+    private void setMaliShaderTest(int mode) {
+        maliShaderTest = Math.max(0, Math.min(2, mode));
+        prefs.edit().putInt("mali_shader_test", maliShaderTest).apply();
+        refreshMaliShaderTests();
+        String message = maliShaderTest == 0 ? "Teste A/B da Mali desativado"
+                : maliShaderTest == 1 ? "Próxima execução: vertex de teste"
+                : "Próxima execução: fragment de teste";
+        Toast.makeText(this, message, Toast.LENGTH_SHORT).show();
+    }
+
+    private String maliShaderTestName() {
+        return maliShaderTest == 1 ? "replace-vs" : maliShaderTest == 2 ? "replace-fs" : "off";
+    }
+
     private void setLogLevel(int level) {
         logLevel = level;
         prefs.edit().putInt("loglevel", level).apply();
@@ -669,7 +732,8 @@ public class Fc2LauncherActivity extends Activity {
     private void resetDefaults() {
         prefs.edit().putBoolean("touch", true).putBoolean("hudctx", false)
                 .putBoolean("nintendo", false).putBoolean("vsync", true)
-                .putInt("loglevel", 1).putInt("render_height", 0).apply();
+                .putInt("loglevel", 1).putInt("render_height", 0)
+                .putInt("mali_shader_test", 0).apply();
         for (Map.Entry<String, CompoundButton> e : toggles.entrySet()) {
             String k = e.getKey();
             boolean def = k.equals("touch") || k.equals("vsync");
@@ -679,6 +743,8 @@ public class Fc2LauncherActivity extends Activity {
         paintLogChips();
         renderHeight = 0;
         refreshResolutions();
+        maliShaderTest = 0;
+        refreshMaliShaderTests();
         Toast.makeText(this, "Padrões restaurados", Toast.LENGTH_SHORT).show();
     }
 
@@ -876,6 +942,7 @@ public class Fc2LauncherActivity extends Activity {
         info.append("\nLog level: ").append(logLevel == 0 ? "off" : logLevel == 1 ? "normal" : "debug")
                 .append("\nVulkan driver selection: ").append(driverChoice())
                 .append("\nInternal render height: ").append(renderHeight == 0 ? "automatic" : renderHeight + " px")
+                .append("\nMali shader A/B test: ").append(maliShaderTestName())
                 .append("\nGame folder selected: ").append(game == null ? "no" : "yes")
                 .append("\n\nThe bundle may contain runtime file paths and a native crash trace. Review before sharing.\n");
         diagnosticFiles.put("device_info.txt", info.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8));
@@ -1464,6 +1531,7 @@ public class Fc2LauncherActivity extends Activity {
         i.putExtra("game", folder);
         i.putExtra("driver", driverPath());
         i.putExtra("renderHeight", renderHeight);
+        i.putExtra("maliShaderTest", maliShaderTest);
         startActivity(i);
         finish();
     }

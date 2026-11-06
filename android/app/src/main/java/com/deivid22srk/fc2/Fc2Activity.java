@@ -20,19 +20,21 @@ public class Fc2Activity extends SDLActivity {
     }
 
     /* argv[1] = game folder, argv[2] = user's libvulkan.so folder ("" for the
-     * system driver), argv[3] = nativeLibraryDir for libadrenotools, and argv[4]
-     * = selected back-buffer height (0 keeps the current automatic behavior). */
+     * system driver), argv[3] = nativeLibraryDir for libadrenotools, argv[4] =
+     * selected back-buffer height, argv[5] = Mali A/B shader-test mode. */
     @Override
     protected String[] getArguments() {
         String game = getIntent().getStringExtra("game");
         if (game == null) return new String[0];
         String driver = getIntent().getStringExtra("driver");
         int renderHeight = getIntent().getIntExtra("renderHeight", 0);
+        int maliShaderTest = getIntent().getIntExtra("maliShaderTest", 0);
         return new String[] {
                 game,
                 driver == null ? "" : driver,
                 getApplicationInfo().nativeLibraryDir,
-                Integer.toString(renderHeight) };
+                Integer.toString(renderHeight),
+                Integer.toString(maliShaderTest) };
     }
 
     @Override
