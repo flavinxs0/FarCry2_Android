@@ -21,7 +21,7 @@ public class Fc2Activity extends SDLActivity {
 
     /* argv[1] = game folder, argv[2] = user's libvulkan.so folder ("" for the
      * system driver), argv[3] = nativeLibraryDir for libadrenotools, argv[4] =
-     * selected back-buffer height, argv[5] = Mali A/B shader-test mode. */
+     * selected back-buffer height, argv[5] = Mali shader/clip-plane test mode. */
     @Override
     protected String[] getArguments() {
         String game = getIntent().getStringExtra("game");

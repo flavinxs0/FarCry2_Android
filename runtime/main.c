@@ -522,6 +522,7 @@ int main(int argc, char **argv) {
         }
         if (argc > 5) {
             unsetenv("DXVK_MALI_SHADER_TEST");
+            unsetenv("DXVK_MALI_DISABLE_CLIP_DISTANCE");
             if (g_log_level >= 2) {
                 int mali_test = atoi(argv[5]);
                 if (mali_test == 1) {
@@ -530,6 +531,9 @@ int main(int argc, char **argv) {
                 } else if (mali_test == 2) {
                     setenv("DXVK_MALI_SHADER_TEST", "replace-fs", 1);
                     LOG("Mali shader A/B test: replace fragment shader");
+                } else if (mali_test == 3) {
+                    setenv("DXVK_MALI_DISABLE_CLIP_DISTANCE", "1", 1);
+                    LOG("Mali diagnostic: D3D9 user clip planes disabled");
                 }
             }
         }

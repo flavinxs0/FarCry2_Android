@@ -126,7 +126,7 @@ public class Fc2LauncherActivity extends Activity {
         if (prefs.contains("loglevel")) logLevel = prefs.getInt("loglevel", 1);
         else logLevel = prefs.getBoolean("logoff", false) ? 0 : prefs.getBoolean("debuglog", false) ? 2 : 1;
         renderHeight = validRenderHeight(prefs.getInt("render_height", 0));
-        maliShaderTest = Math.max(0, Math.min(2, prefs.getInt("mali_shader_test", 0)));
+        maliShaderTest = Math.max(0, Math.min(3, prefs.getInt("mali_shader_test", 0)));
         buildUi();
         refreshFolder();
     }
@@ -678,7 +678,8 @@ public class Fc2LauncherActivity extends Activity {
         maliShaderTestList.removeAllViews();
         String[] labels = {"Desativado — shaders originais",
                 "Substituir vertex (manter fragment original)",
-                "Substituir fragment (manter vertex original)"};
+                "Substituir fragment (manter vertex original)",
+                "Desativar clip planes D3D9 (diagnóstico Mali; clipping ignorado)"};
         for (int mode = 0; mode < labels.length; mode++) {
             if (mode > 0) divider(maliShaderTestList);
             boolean selected = maliShaderTest == mode;
@@ -701,17 +702,19 @@ public class Fc2LauncherActivity extends Activity {
     }
 
     private void setMaliShaderTest(int mode) {
-        maliShaderTest = Math.max(0, Math.min(2, mode));
+        maliShaderTest = Math.max(0, Math.min(3, mode));
         prefs.edit().putInt("mali_shader_test", maliShaderTest).apply();
         refreshMaliShaderTests();
         String message = maliShaderTest == 0 ? "Teste A/B da Mali desativado"
                 : maliShaderTest == 1 ? "Próxima execução: vertex de teste"
-                : "Próxima execução: fragment de teste";
+                : maliShaderTest == 2 ? "Próxima execução: fragment de teste"
+                : "Próxima execução: clip planes D3D9 desativados";
         Toast.makeText(this, message, Toast.LENGTH_SHORT).show();
     }
 
     private String maliShaderTestName() {
-        return maliShaderTest == 1 ? "replace-vs" : maliShaderTest == 2 ? "replace-fs" : "off";
+        return maliShaderTest == 1 ? "replace-vs" : maliShaderTest == 2 ? "replace-fs"
+                : maliShaderTest == 3 ? "disable-d3d9-clip-planes" : "off";
     }
 
     private void setLogLevel(int level) {

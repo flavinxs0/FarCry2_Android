@@ -262,6 +262,7 @@ namespace dxvk {
     DxsoProgramInfo            m_programInfo;
     const DxsoAnalysisInfo*    m_analysis;
     const D3D9ConstantLayout*  m_layout;
+    bool                       m_disableClipDistance = false;
 
     DxsoShaderMetaInfo         m_meta;
     DxsoDefinedConstants       m_constants;

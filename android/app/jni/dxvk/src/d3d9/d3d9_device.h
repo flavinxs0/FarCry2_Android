@@ -793,7 +793,8 @@ namespace dxvk {
     }
 
     inline bool IsClipPlaneEnabled() {
-      return m_state.renderStates[D3DRS_CLIPPLANEENABLE] != 0;
+      return !m_maliDisableClipDistance
+          && m_state.renderStates[D3DRS_CLIPPLANEENABLE] != 0;
     }
 
     void BindMultiSampleState();
@@ -1134,6 +1135,7 @@ namespace dxvk {
 
     D3D9Adapter*                    m_adapter;
     Rc<DxvkDevice>                  m_dxvkDevice;
+    bool                            m_maliDisableClipDistance = false;
 
     uint32_t                        m_frameLatency = DefaultFrameLatency;
 

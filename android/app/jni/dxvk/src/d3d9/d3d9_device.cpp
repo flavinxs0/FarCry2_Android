@@ -25,6 +25,7 @@
 
 #include <algorithm>
 #include <cfloat>
+#include <cstdlib>
 #ifdef MSC_VER
 #pragma fenv_access (on)
 #endif
@@ -50,6 +51,12 @@ namespace dxvk {
     , m_isSWVP         ( (BehaviorFlags & D3DCREATE_SOFTWARE_VERTEXPROCESSING) ? true : false )
     , m_csThread       ( dxvkDevice->createContext() )
     , m_csChunk        ( AllocCsChunk() ) {
+    const char* disableClipDistance = std::getenv("DXVK_MALI_DISABLE_CLIP_DISTANCE");
+    m_maliDisableClipDistance = disableClipDistance != nullptr
+      && disableClipDistance[0] == '1' && disableClipDistance[1] == '\0';
+    if (m_maliDisableClipDistance)
+      Logger::info("D3D9DeviceEx: Mali diagnostic disables user clip planes.");
+
     // If we can SWVP, then we use an extended constant set
     // as SWVP has many more slots available than HWVP.
     bool canSWVP = CanSWVP();

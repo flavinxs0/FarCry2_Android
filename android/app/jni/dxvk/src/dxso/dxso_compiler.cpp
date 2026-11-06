@@ -12,6 +12,7 @@
 #include "../dxvk/dxvk_spec_const.h"
 
 #include <cfloat>
+#include <cstdlib>
 
 namespace dxvk {
 
@@ -26,6 +27,10 @@ namespace dxvk {
     , m_analysis   ( &analysis )
     , m_layout     ( &layout )
     , m_module     ( spvVersion(1, 3) ) {
+    const char* disableClipDistance = std::getenv("DXVK_MALI_DISABLE_CLIP_DISTANCE");
+    m_disableClipDistance = disableClipDistance != nullptr
+      && disableClipDistance[0] == '1' && disableClipDistance[1] == '\0';
+
     // Declare an entry point ID. We'll need it during the
     // initialization phase where the execution mode is set.
     m_entryPointId = m_module.allocateId();
@@ -419,7 +424,8 @@ namespace dxvk {
 
 
   void DxsoCompiler::emitVsInit() {
-    m_module.enableCapability(spv::CapabilityClipDistance);
+    if (!m_disableClipDistance)
+      m_module.enableCapability(spv::CapabilityClipDistance);
 
     // Only VS needs this, because PS has
     // non-indexable specialized output regs
@@ -3755,7 +3761,8 @@ void DxsoCompiler::emitControlFlowGenericLoop(
       m_vs.functionId, 0, nullptr);
     this->emitLinkerOutputSetup();
 
-    this->emitVsClipping();
+    if (!m_disableClipDistance)
+      this->emitVsClipping();
 
     this->emitFunctionEnd();
   }
